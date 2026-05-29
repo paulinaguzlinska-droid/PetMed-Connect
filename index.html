@@ -59,8 +59,8 @@
   <script>
     const externalDB = [
       { barcode: "8595602508167", name: "Canvit Chondro Maxi", type: "medicine", recommended_dose: 1, unit: "tablet" },
-      { barcode: "5908298509876", name: "Dolina Noteci Premium (Kurczak)", type: "food", kcal_per_100g: 170 },
-      { barcode: "5407007851119", name: "Royal Canin Cavalier", type: "food", kcal_per_100g: 370 }
+      { barcode: "5407007851119", name: "Royal Canin Cavalier", type: "food", kcal_per_100g: 370 },
+      { barcode: "5908298509876", name: "Dolina Noteci Premium (Kurczak)", type: "food", kcal_per_100g: 115 }
     ];
 
     const app = {
@@ -166,7 +166,12 @@
         this.state.deletingPet = false; 
         this.state.editingTaskId = null;
         this.state.cloningTaskData = null;
-        this.state.pendingProduct = null;
+        
+        // Nie czyścimy pendingProduct jeśli wchodzimy do harmonogramu (aby wkleić zeskanowane dane)
+        if (view !== 'schedule') {
+            this.state.pendingProduct = null;
+        }
+
         this.renderNav();
         this.renderView();
 
@@ -349,7 +354,6 @@
         if (ctxCal) {
           if (this.chartInstanceCalorie) this.chartInstanceCalorie.destroy();
 
-          // Generowanie dat z ostatnich 7 dni dla osi X
           const dniTygodnia = ['Ndz', 'Pon', 'Wt', 'Śr', 'Czw', 'Pt', 'Sob'];
           const last7Dates = [...Array(7)].map((_, i) => {
               const d = new Date();
@@ -358,10 +362,8 @@
           });
           const labels = last7Dates.map(d => dniTygodnia[d.getDay()]);
 
-          // SYMULACJA REALISTYCZNYCH DANYCH (na potrzeby prezentacji)
           let calData = [];
           
-          // Spróbujmy wyciągnąć prawdziwe dane z historii dozowań jedzenia
           last7Dates.forEach(dateObj => {
               const dateStr = dateObj.toISOString().split('T')[0];
               const dayLogs = pet.dispenseHistory.filter(h => h.date === dateStr && h.status === 'success' && h.type === 'food');
@@ -369,19 +371,15 @@
               calData.push(dayKcal);
           });
 
-          // Jeśli wykres jest pusty (bo nikt jeszcze nic nie wydał w prawdziwej aplikacji), 
-          // generujemy mock-up pokazujący potęgę analityki, oscylujący wokół dailyKcal
           const totalLogged = calData.reduce((a,b)=>a+b, 0);
           if (totalLogged === 0) {
               calData = last7Dates.map((_, i) => {
-                  // Celowe zróżnicowanie: kilka dni idealnych, jeden dzień przejedzenia, jeden niedojedzenia
-                  if (i === 2) return pet.dailyKcal + 210; // Przejedzenie
-                  if (i === 5) return pet.dailyKcal - 150; // Niedojedzenie
-                  return pet.dailyKcal + (Math.random() * 40 - 20); // Normalnie +/- 20 kcal
+                  if (i === 2) return pet.dailyKcal + 210;
+                  if (i === 5) return pet.dailyKcal - 150;
+                  return pet.dailyKcal + (Math.random() * 40 - 20);
               });
           }
 
-          // Tworzymy wykres mieszany: Słupki (Zjedzone) + Linia (Cel)
           this.chartInstanceCalorie = new Chart(ctxCal, {
             type: 'bar',
             data: {
@@ -391,7 +389,7 @@
                   type: 'line',
                   label: 'Cel (Target)',
                   data: last7Dates.map(() => pet.dailyKcal),
-                  borderColor: '#ef4444', // Czerwona linia celu
+                  borderColor: '#ef4444',
                   borderWidth: 2,
                   borderDash: [5, 5],
                   pointRadius: 0,
@@ -660,11 +658,9 @@
         const task = pet.schedule.find(t => t.id === id); 
         if(!task) return;
 
-        // --- DODANE POTWIERDZENIE DLA AUTOMATYCZNEGO DOZOWANIA ---
         if (task.autoDispense) {
             const confirmMsg = `Czy na pewno chcesz wywołać wydanie porcji: "${task.name}" (${task.amount}${task.unit})?`;
             if (!confirm(confirmMsg)) {
-                // Jeśli kliknie Anuluj, wycofujemy zaznaczenie checkboxa
                 this.renderView(); 
                 return;
             }
@@ -731,7 +727,6 @@
         return `${h % 12 || 12}:${min} ${h >= 12 ? 'PM' : 'AM'}`;
       },
 
-      // --- ZAKTUALIZOWANA, BEZPIECZNA KAMERA ---
       startCameraScan() {
         this.state.scanMode = 'camera';
         this.renderView();
@@ -747,7 +742,6 @@
             },
             (errorMessage) => { /* ignorujemy puste klatki */ }
           ).catch((err) => {
-            // ROZWIĄZANIE PROBLEMU Z UPRAWNIENIAMI: Zamiast wymuszać stop() czyścimy stan ręcznie
             alert("Brak dostępu do aparatu. Upewnij się, że zezwoliłeś przeglądarce na użycie kamery.");
             try { this.qrScanner.clear(); } catch(e) {} 
             this.qrScanner = null;
@@ -811,7 +805,16 @@
           alert(`Nie znaleziono kodu ${decodedText} w bazie produktów.`);
           this.state.pendingProduct = null;
         }
+        
         this.navigate('schedule');
+        
+        // ZMIANA: Automatyczne przewinięcie do formularza po skanowaniu
+        if (product) {
+            setTimeout(() => {
+                const formContainer = document.getElementById('taskFormContainer');
+                if (formContainer) formContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 100);
+        }
       },
 
       renderNav() {
@@ -1298,33 +1301,28 @@
           `;
         }
         else if (this.state.currentView === 'health') {
-          // --- KALKULACJE DANYCH NA POTRZEBY WIDOKU HEALTH ---
           const dzisiajData = new Date();
           const last7DatesStr = [...Array(7)].map((_, i) => {
               const d = new Date(); d.setDate(dzisiajData.getDate() - (6 - i)); return d.toISOString().split('T')[0];
           });
 
-          // Symulacja / wyliczanie kalorii
           let sumConsumedCalories = 0;
           let medTasksPlanned = 0;
           let medTasksCompleted = 0;
 
           last7DatesStr.forEach(dateStr => {
-              // Kalorie z historii (lub w tym demo - mock-up dla prezentacji, jeśli prawdziwa historia jest pusta)
-              // Logika medyczna:
               const plannedMeds = pet.schedule.filter(t => t.type === 'medicine' && (!t.exclusions || !t.exclusions.includes(dateStr)) && new Date(t.startDate) <= new Date(dateStr));
               medTasksPlanned += plannedMeds.length;
               const completedMeds = plannedMeds.filter(t => t.completedDates && t.completedDates.includes(dateStr));
               medTasksCompleted += completedMeds.length;
           });
 
-          // Ponieważ to system demo, doładujmy wiarygodne KPI jeśli ktoś jeszcze nie "klikał" tydzień
-          let dietCompliance = 94; // np. 94% zgodności
+          let dietCompliance = 94; 
           let dietBg = 'bg-blue-500';
           let dietText = 'text-slate-800';
 
           let medAdherence = medTasksPlanned === 0 ? 100 : Math.round((medTasksCompleted / medTasksPlanned) * 100);
-          if (medTasksPlanned === 0) medAdherence = 90; // mock up
+          if (medTasksPlanned === 0) medAdherence = 90; 
           
           let medBg = medAdherence > 85 ? 'bg-green-500' : 'bg-red-500';
           let medText = medAdherence > 85 ? 'text-slate-800' : 'text-red-600';
@@ -1426,7 +1424,6 @@
           content.innerHTML = `<div class="p-10 text-center text-slate-400 font-medium">Brak widoku.</div>`;
         }
         
-        // --- CUSTOM MODALS RENDERING ---
          if (this.state.deletingTask) {
           const taskToDelete = pet.schedule.find(t => t.id === this.state.deletingTask.id);
           if (taskToDelete) {
